@@ -2,18 +2,18 @@ const express = require('express');
 const app = express();
 const PORT = 3000;
 
-// einfacher Webserver für UptimeRobot
+// Einfacher Webserver für UptimeRobot
 app.get('/', (req, res) => res.send('Bot ist online!'));
 app.listen(PORT, () => console.log(`Webserver läuft auf Port ${PORT}`));
 
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
 const fs = require('fs');
 
 const client = new Client({ 
     intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
     ] 
 });
@@ -34,52 +34,28 @@ function saveData(data) {
     fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
 }
 
-client.on('clientReady', () => {
+client.once('clientReady', () => {
     console.log(`Bot ist online als ${client.user.tag}`);
 });
 
-client.on('messageCreate', async message => {
+client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
-    const member = message.member;
-    const guild = message.guild;
-    const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
-    if (!role) return;
-
-    let data = loadData();
-
-    // 1️⃣ Claim Command
-    if (message.content.toLowerCase() === '!claim') {
-        const now = Date.now();
-
-        // Zeit vom aktuellen Besitzer speichern
-        if (currentHolderId && roleStartTime) {
-            const duration = now - roleStartTime;
-            if (!data[currentHolderId]) data[currentHolderId] = 0;
-            data[currentHolderId] += duration;
-        }
-
-        // Rolle von allen entfernen
-        guild.members.cache.forEach(async m => {
-            if (m.roles.cache.has(role.id)) {
-                await m.roles.remove(role).catch(console.error);
-            }
-        });
-
-        // Rolle dem neuen Besitzer geben
-        await member.roles.add(role).catch(console.error);
-
-        currentHolderId = member.id;
-        roleStartTime = now;
-
-        saveData(data);
-
-        message.channel.send(`${member.user.tag} hat die Rolle "${ROLE_NAME}" jetzt! 🔥`);
+    // Button-Message initial senden
+    if (message.content.toLowerCase() === '!setupclick') {
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('claim_role')
+                    .setLabel('Claim Klick-Rolle 🔥')
+                    .setStyle(ButtonStyle.Primary)
+            );
+        await message.channel.send({ content: 'Klicke hier, um die Rolle "klick" zu claimen:', components: [row] });
     }
 
-    // 2️⃣ Leaderboard Command
+    // Leaderboard per Command
     if (message.content.toLowerCase() === '!leaderboard') {
-        // Aktuelle Zeit für aktuellen Besitzer zählen
+        const data = loadData();
         if (currentHolderId && roleStartTime) {
             const now = Date.now();
             const duration = now - roleStartTime;
@@ -96,7 +72,6 @@ client.on('messageCreate', async message => {
         if (sorted.length === 0) return message.channel.send("Noch keine Daten vorhanden.");
 
         let leaderboardText = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
-
         for (let i = 0; i < sorted.length; i++) {
             const user = await client.users.fetch(sorted[i][0]);
             const totalSeconds = Math.floor(sorted[i][1] / 1000);
@@ -107,6 +82,34 @@ client.on('messageCreate', async message => {
 
         message.channel.send(leaderboardText);
     }
+});
+
+// Interaktionen (Button-Klicks) abfangen
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== 'claim_role') return;
+
+    const member = interaction.member;
+    const guild = interaction.guild;
+    const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
+    if (!role) return interaction.reply({ content: 'Rolle nicht gefunden!', ephemeral: true });
+
+    const data = loadData();
+    const now = Date.now();
+
+    // ❌ Alte Rolle entfernen – nur eine Person darf sie haben
+    const previousHolder = guild.members.cache.get(currentHolderId);
+    if (previousHolder && previousHolder.roles.cache.has(role.id)) {
+        await previousHolder.roles.remove(role).catch(console.error);
+    }
+
+    // Rolle neu vergeben
+    await member.roles.add(role).catch(console.error);
+    currentHolderId = member.id;
+    roleStartTime = now;
+    saveData(data);
+
+    await interaction.reply({ content: `${member.user.tag} hat die Rolle "${ROLE_NAME}" jetzt! 🔥`, ephemeral: false });
 });
 
 client.login(TOKEN);
