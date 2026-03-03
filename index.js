@@ -1,48 +1,8 @@
-const express = require('express');
-const app = express();
-const PORT = 3000;
-
-// Einfacher Webserver für UptimeRobot
-app.get('/', (req, res) => res.send('Bot ist online!'));
-app.listen(PORT, () => console.log(`Webserver läuft auf Port ${PORT}`));
-
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
-const fs = require('fs');
-
-const client = new Client({ 
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ] 
-});
-
-const TOKEN = process.env.TOKEN;
-const ROLE_NAME = 'klick';
-
-let roleStartTime = null;
-let currentHolderId = null;
-
-// Daten laden / speichern
-function loadData() {
-    if (!fs.existsSync('data.json')) return {};
-    return JSON.parse(fs.readFileSync('data.json'));
-}
-
-function saveData(data) {
-    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-}
-
-client.once('clientReady', () => {
-    console.log(`Bot ist online als ${client.user.tag}`);
-});
-
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
-    // Button-Message initial senden
     if (message.content.toLowerCase() === '!setupclick') {
+        // Nachricht einmalig erstellen
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -50,41 +10,18 @@ client.on(Events.MessageCreate, async message => {
                     .setLabel('Claim Klick-Rolle 🔥')
                     .setStyle(ButtonStyle.Primary)
             );
-        await message.channel.send({ content: 'Klicke hier, um die Rolle "klick" zu claimen:', components: [row] });
-    }
 
-    // Leaderboard per Command
-    if (message.content.toLowerCase() === '!leaderboard') {
-        const data = loadData();
-        if (currentHolderId && roleStartTime) {
-            const now = Date.now();
-            const duration = now - roleStartTime;
-            if (!data[currentHolderId]) data[currentHolderId] = 0;
-            data[currentHolderId] += duration;
-            roleStartTime = now;
-            saveData(data);
-        }
+        const botMessage = await message.channel.send({
+            content: 'Klicke hier, um die Rolle "klick" zu claimen!',
+            components: [row]
+        });
 
-        const sorted = Object.entries(data)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 10);
-
-        if (sorted.length === 0) return message.channel.send("Noch keine Daten vorhanden.");
-
-        let leaderboardText = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
-        for (let i = 0; i < sorted.length; i++) {
-            const user = await client.users.fetch(sorted[i][0]);
-            const totalSeconds = Math.floor(sorted[i][1] / 1000);
-            const minutes = Math.floor(totalSeconds / 60);
-            const seconds = totalSeconds % 60;
-            leaderboardText += `${i + 1}. ${user.tag} – ${minutes}m ${seconds}s\n`;
-        }
-
-        message.channel.send(leaderboardText);
+        // Die ID merken, falls du später die Nachricht updaten willst
+        client.claimMessageId = botMessage.id;
     }
 });
 
-// Interaktionen (Button-Klicks) abfangen
+// Interaktion: Rolle übertragen
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId !== 'claim_role') return;
@@ -97,7 +34,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const data = loadData();
     const now = Date.now();
 
-    // ❌ Alte Rolle entfernen – nur eine Person darf sie haben
+    // Alte Rolle entfernen
     const previousHolder = guild.members.cache.get(currentHolderId);
     if (previousHolder && previousHolder.roles.cache.has(role.id)) {
         await previousHolder.roles.remove(role).catch(console.error);
@@ -109,7 +46,18 @@ client.on(Events.InteractionCreate, async interaction => {
     roleStartTime = now;
     saveData(data);
 
-    await interaction.reply({ content: `${member.user.tag} hat die Rolle "${ROLE_NAME}" jetzt! 🔥`, ephemeral: false });
-});
+    // Ephemeral Reply für den User (sichtbar nur für ihn)
+    await interaction.reply({ content: `Du hast die Rolle "${ROLE_NAME}" jetzt! 🔥`, ephemeral: true });
 
-client.login(TOKEN);
+    // Optional: Status der Button-Nachricht aktualisieren
+    const channel = interaction.channel;
+    if (client.claimMessageId) {
+        const botMessage = await channel.messages.fetch(client.claimMessageId).catch(() => null);
+        if (botMessage) {
+            botMessage.edit({
+                content: `Die Rolle "klick" gehört gerade: <@${member.id}>`,
+                components: botMessage.components
+            }).catch(console.error);
+        }
+    }
+});
