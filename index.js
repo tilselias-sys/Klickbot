@@ -153,7 +153,7 @@ client.on(Events.MessageCreate, async message => {
 });
 
 // =======================================
-// Button Interaction (Haupt-Logik)
+// Button Interaction (ROBUST VERSION)
 // =======================================
 
 let interactionLock = false;
@@ -161,68 +161,79 @@ let interactionLock = false;
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton() || interaction.customId !== 'claim_role') return;
 
+    // Falls der Lock aktiv ist, senden wir eine kurze ephemere Nachricht
     if (interactionLock) {
-        return interaction.reply({ content: "Zu schnell! Bitte kurz warten.", ephemeral: true });
+        return interaction.reply({ content: "⏳ System überlastet, versuch es in einer Sekunde nochmal!", ephemeral: true }).catch(() => {});
     }
 
     interactionLock = true;
 
     try {
-        const { guild, member } = interaction;
-        const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
+        const { guild, member, channel } = interaction;
         
+        // 1. Rolle suchen
+        const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
         if (!role) {
-            interactionLock = false;
-            return interaction.reply({ content: `Fehler: Die Rolle "${ROLE_NAME}" existiert nicht!`, ephemeral: true });
-        }
-
-        // Defer Update (Bestätigt den Klick sofort visuell)
-        await interaction.deferUpdate().catch(() => {});
-
-        const data = loadData();
-        const now = Date.now();
-
-        // 1. Falls der User die Rolle schon hat -> Nichts tun
-        if (data.currentHolderId === member.id) {
+            await interaction.reply({ content: `❌ Fehler: Rolle "${ROLE_NAME}" nicht gefunden!`, ephemeral: true });
             interactionLock = false;
             return;
         }
 
-        // 2. Zeit für den ALTEN Besitzer final speichern
-        if (data.currentHolderId && data.roleStartTime) {
+        const data = loadData();
+        const now = Date.now();
+
+        // 2. Schon Besitzer?
+        if (data.currentHolderId === member.id) {
+            await interaction.reply({ content: "✨ Du hast die Rolle bereits!", ephemeral: true });
+            interactionLock = false;
+            return;
+        }
+
+        // 3. Sofort bestätigen (wichtig für Discord!)
+        // Wir nutzen deferUpdate erst hier, um sicher zu sein, dass wir arbeiten
+        await interaction.deferUpdate().catch(() => {});
+
+        // 4. Zeit für alten Besitzer speichern & Rolle entfernen
+        if (data.currentHolderId) {
             const duration = now - data.roleStartTime;
             data.leaderboard[data.currentHolderId] = (data.leaderboard[data.currentHolderId] || 0) + duration;
             
-            // Rolle beim alten Besitzer entfernen (Sicher via Fetch)
             try {
                 const prevMember = await guild.members.fetch(data.currentHolderId).catch(() => null);
-                if (prevMember) await prevMember.roles.remove(role);
-            } catch (e) { console.error("Konnte Rolle vom alten Besitzer nicht entfernen."); }
+                if (prevMember && prevMember.roles.cache.has(role.id)) {
+                    await prevMember.roles.remove(role);
+                }
+            } catch (e) { 
+                console.log("Hinweis: Konnte Rolle vom alten Besitzer nicht entfernen (evtl. Server verlassen).");
+            }
         }
 
-        // 3. Rolle dem NEUEN Besitzer geben
+        // 5. Neue Rolle vergeben
         await member.roles.add(role);
 
-        // 4. Daten aktualisieren
+        // 6. Daten speichern
         data.currentHolderId = member.id;
         data.roleStartTime = now;
         saveData(data);
 
-        // 5. Button-Nachricht updaten
-        if (data.claimMessageId) {
-            const botMessage = await interaction.channel.messages.fetch(data.claimMessageId).catch(() => null);
-            if (botMessage) {
-                await botMessage.edit({
-                    content: `Die Rolle **${ROLE_NAME}** gehört gerade: <@${member.id}>`,
-                    components: botMessage.components
-                }).catch(() => {});
-            }
+        // 7. Nachricht im Kanal aktualisieren (Optionaler Erfolg)
+        try {
+            // Wir nutzen die Nachricht der Interaktion direkt, statt die ID aus der JSON zu erzwingen
+            await interaction.editReply({
+                content: `Die Rolle **${ROLE_NAME}** gehört gerade: <@${member.id}>`,
+                components: interaction.message.components
+            });
+        } catch (editError) {
+            console.error("Konnte Nachricht nicht editieren, sende neue Nachricht.");
+            // Falls das Editieren fehlschlägt, posten wir einfach neu
+            await channel.send(`🔥 **Wechsel!** Die Rolle gehört nun <@${member.id}>!`);
         }
 
     } catch (err) {
-        console.error("Fehler im Button-Prozess:", err);
+        console.error("KRITISCHER FEHLER:", err);
     } finally {
-        interactionLock = false; // Wird IMMER freigegeben, auch bei Fehlern
+        // Der Lock MUSS immer gelöst werden
+        interactionLock = false;
     }
 });
 
