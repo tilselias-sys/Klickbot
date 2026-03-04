@@ -1,6 +1,6 @@
-// ===========================
-// 🔥 Klick-Bot – Restart-Safe Version
-// ===========================
+// =======================================
+// 🔥 Klick-Bot – Ultra Stable Version
+// =======================================
 
 const express = require('express');
 const app = express();
@@ -21,6 +21,13 @@ const {
 
 const fs = require('fs');
 
+const TOKEN = process.env.TOKEN;
+const ROLE_NAME = 'klick';
+
+// =======================================
+// Discord Client
+// =======================================
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -30,12 +37,9 @@ const client = new Client({
     ]
 });
 
-const TOKEN = process.env.TOKEN;
-const ROLE_NAME = 'klick';
-
-// ===========================
-// 📂 Datenspeicherung
-// ===========================
+// =======================================
+// Datenspeicherung
+// =======================================
 
 function loadData() {
     if (!fs.existsSync('data.json')) {
@@ -52,16 +56,15 @@ function saveData(data) {
     fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
 }
 
-// ===========================
-// 🚀 Bot Start
-// ===========================
+// =======================================
+// Bot Ready (Restart-Safe)
+// =======================================
 
 client.once('clientReady', async () => {
     console.log(`Bot ist online als ${client.user.tag}`);
 
     let data = loadData();
 
-    // Falls Bot neu gestartet wurde → Rolle im Server prüfen
     const guilds = await client.guilds.fetch();
 
     for (const [guildId] of guilds) {
@@ -76,26 +79,25 @@ client.once('clientReady', async () => {
         if (holder) {
             data.currentHolderId = holder.id;
 
-            // Wenn keine Startzeit existiert → jetzt setzen
             if (!data.roleStartTime) {
                 data.roleStartTime = Date.now();
             }
 
-            console.log(`Aktueller Rollenbesitzer erkannt: ${holder.user.tag}`);
+            console.log(`Aktueller Besitzer erkannt: ${holder.user.tag}`);
         }
     }
 
     saveData(data);
 });
 
-// ===========================
-// 📩 Commands
-// ===========================
+// =======================================
+// Commands
+// =======================================
 
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
-    // Setup Button einmalig
+    // Button Setup
     if (message.content.toLowerCase() === '!setupclick') {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -112,13 +114,13 @@ client.on(Events.MessageCreate, async message => {
         client.claimMessageId = botMessage.id;
     }
 
-    // Leaderboard anzeigen
+    // Leaderboard
     if (message.content.toLowerCase() === '!leaderboard') {
         let data = loadData();
 
-        // Aktuelle Zeit des Besitzers speichern
         if (data.currentHolderId && data.roleStartTime) {
             const duration = Date.now() - data.roleStartTime;
+
             if (!data.leaderboard[data.currentHolderId])
                 data.leaderboard[data.currentHolderId] = 0;
 
@@ -149,28 +151,28 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// ===========================
-// 🔘 Button Interaktion
-// ===========================
+// =======================================
+// Button Interaction (3s Safe)
+// =======================================
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId !== 'claim_role') return;
+
+    // ✅ Sofort Interaction sichern (kein 10062 Fehler mehr)
+    await interaction.deferReply({ ephemeral: true });
 
     const member = interaction.member;
     const guild = interaction.guild;
     const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
 
     if (!role)
-        return interaction.reply({
-            content: 'Rolle nicht gefunden!',
-            ephemeral: true
-        });
+        return interaction.editReply('Rolle nicht gefunden!');
 
     let data = loadData();
     const now = Date.now();
 
-    // 🔥 Alte Zeit speichern
+    // Alte Zeit speichern
     if (data.currentHolderId && data.roleStartTime) {
         const duration = now - data.roleStartTime;
 
@@ -194,12 +196,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     saveData(data);
 
-    await interaction.reply({
-        content: `Du hast die Rolle "${ROLE_NAME}" jetzt! 🔥`,
-        ephemeral: true
-    });
+    await interaction.editReply(`Du hast die Rolle "${ROLE_NAME}" jetzt! 🔥`);
 
-    // Button-Nachricht aktualisieren
+    // Button Nachricht aktualisieren
     if (client.claimMessageId) {
         const channel = interaction.channel;
         const botMessage = await channel.messages
@@ -210,13 +209,20 @@ client.on(Events.InteractionCreate, async interaction => {
             botMessage.edit({
                 content: `Die Rolle "klick" gehört gerade: <@${member.id}>`,
                 components: botMessage.components
-            });
+            }).catch(console.error);
         }
     }
 });
 
-// ===========================
-// 🔐 Login
-// ===========================
+// =======================================
+// Crash-Schutz
+// =======================================
+
+client.on('error', console.error);
+process.on('unhandledRejection', console.error);
+
+// =======================================
+// Login
+// =======================================
 
 client.login(TOKEN);
