@@ -1,19 +1,24 @@
 // ===========================
-// Klick-Bot mit Button & Leaderboard
+// 🔥 Klick-Bot – Restart-Safe Version
 // ===========================
 
 const express = require('express');
 const app = express();
 const PORT = 3000;
 
-// Webserver für UptimeRobot (hält Render am Leben)
+// Webserver für UptimeRobot
 app.get('/', (req, res) => res.send('Bot ist online!'));
 app.listen(PORT, () => console.log(`Webserver läuft auf Port ${PORT}`));
 
-// ===========================
-// Discord.js Setup
-// ===========================
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
+const {
+    Client,
+    GatewayIntentBits,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    Events
+} = require('discord.js');
+
 const fs = require('fs');
 
 const client = new Client({
@@ -28,14 +33,18 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const ROLE_NAME = 'klick';
 
-let roleStartTime = null;
-let currentHolderId = null;
+// ===========================
+// 📂 Datenspeicherung
+// ===========================
 
-// ===========================
-// Daten speichern / laden
-// ===========================
 function loadData() {
-    if (!fs.existsSync('data.json')) return {};
+    if (!fs.existsSync('data.json')) {
+        return {
+            leaderboard: {},
+            currentHolderId: null,
+            roleStartTime: null
+        };
+    }
     return JSON.parse(fs.readFileSync('data.json'));
 }
 
@@ -44,72 +53,106 @@ function saveData(data) {
 }
 
 // ===========================
-// Bot Ready
+// 🚀 Bot Start
 // ===========================
-client.once('clientReady', () => {
+
+client.once('clientReady', async () => {
     console.log(`Bot ist online als ${client.user.tag}`);
+
+    let data = loadData();
+
+    // Falls Bot neu gestartet wurde → Rolle im Server prüfen
+    const guilds = await client.guilds.fetch();
+
+    for (const [guildId] of guilds) {
+        const guild = await client.guilds.fetch(guildId);
+        await guild.members.fetch();
+
+        const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
+        if (!role) continue;
+
+        const holder = role.members.first();
+
+        if (holder) {
+            data.currentHolderId = holder.id;
+
+            // Wenn keine Startzeit existiert → jetzt setzen
+            if (!data.roleStartTime) {
+                data.roleStartTime = Date.now();
+            }
+
+            console.log(`Aktueller Rollenbesitzer erkannt: ${holder.user.tag}`);
+        }
+    }
+
+    saveData(data);
 });
 
 // ===========================
-// Setup Button-Message
+// 📩 Commands
 // ===========================
+
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
 
+    // Setup Button einmalig
     if (message.content.toLowerCase() === '!setupclick') {
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('claim_role')
-                    .setLabel('Claim Klick-Rolle 🔥')
-                    .setStyle(ButtonStyle.Primary)
-            );
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('claim_role')
+                .setLabel('Claim Klick-Rolle 🔥')
+                .setStyle(ButtonStyle.Primary)
+        );
 
         const botMessage = await message.channel.send({
             content: 'Klicke hier, um die Rolle "klick" zu claimen!',
             components: [row]
         });
 
-        // Nachricht-ID merken, um sie später updaten zu können
         client.claimMessageId = botMessage.id;
     }
 
-    // Leaderboard Command
+    // Leaderboard anzeigen
     if (message.content.toLowerCase() === '!leaderboard') {
-        const data = loadData();
+        let data = loadData();
 
-        // Aktuelle Zeit für momentanen Besitzer zählen
-        if (currentHolderId && roleStartTime) {
-            const now = Date.now();
-            const duration = now - roleStartTime;
-            if (!data[currentHolderId]) data[currentHolderId] = 0;
-            data[currentHolderId] += duration;
-            roleStartTime = now;
+        // Aktuelle Zeit des Besitzers speichern
+        if (data.currentHolderId && data.roleStartTime) {
+            const duration = Date.now() - data.roleStartTime;
+            if (!data.leaderboard[data.currentHolderId])
+                data.leaderboard[data.currentHolderId] = 0;
+
+            data.leaderboard[data.currentHolderId] += duration;
+            data.roleStartTime = Date.now();
             saveData(data);
         }
 
-        const sorted = Object.entries(data)
+        const sorted = Object.entries(data.leaderboard)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 10);
 
-        if (sorted.length === 0) return message.channel.send("Noch keine Daten vorhanden.");
+        if (sorted.length === 0)
+            return message.channel.send("Noch keine Daten vorhanden.");
 
-        let leaderboardText = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
+        let text = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
+
         for (let i = 0; i < sorted.length; i++) {
             const user = await client.users.fetch(sorted[i][0]);
             const totalSeconds = Math.floor(sorted[i][1] / 1000);
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
-            leaderboardText += `${i + 1}. ${user.tag} – ${minutes}m ${seconds}s\n`;
+
+            text += `${i + 1}. ${user.tag} – ${minutes}m ${seconds}s\n`;
         }
 
-        message.channel.send(leaderboardText);
+        message.channel.send(text);
     }
 });
 
 // ===========================
-// Button Interaktion
+// 🔘 Button Interaktion
 // ===========================
+
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId !== 'claim_role') return;
@@ -117,40 +160,63 @@ client.on(Events.InteractionCreate, async interaction => {
     const member = interaction.member;
     const guild = interaction.guild;
     const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
-    if (!role) return interaction.reply({ content: 'Rolle nicht gefunden!', ephemeral: true });
 
-    const data = loadData();
+    if (!role)
+        return interaction.reply({
+            content: 'Rolle nicht gefunden!',
+            ephemeral: true
+        });
+
+    let data = loadData();
     const now = Date.now();
 
-    // Alte Rolle entfernen (nur eine Person darf die Rolle haben)
-    const previousHolder = guild.members.cache.get(currentHolderId);
+    // 🔥 Alte Zeit speichern
+    if (data.currentHolderId && data.roleStartTime) {
+        const duration = now - data.roleStartTime;
+
+        if (!data.leaderboard[data.currentHolderId])
+            data.leaderboard[data.currentHolderId] = 0;
+
+        data.leaderboard[data.currentHolderId] += duration;
+    }
+
+    // Alte Rolle entfernen
+    const previousHolder = guild.members.cache.get(data.currentHolderId);
     if (previousHolder && previousHolder.roles.cache.has(role.id)) {
         await previousHolder.roles.remove(role).catch(console.error);
     }
 
-    // Rolle neu vergeben
+    // Neue Rolle vergeben
     await member.roles.add(role).catch(console.error);
-    currentHolderId = member.id;
-    roleStartTime = now;
+
+    data.currentHolderId = member.id;
+    data.roleStartTime = now;
+
     saveData(data);
 
-    // Ephemeral Reply für den klickenden User (sichtbar nur für ihn)
-    await interaction.reply({ content: `Du hast die Rolle "${ROLE_NAME}" jetzt! 🔥`, ephemeral: true });
+    await interaction.reply({
+        content: `Du hast die Rolle "${ROLE_NAME}" jetzt! 🔥`,
+        ephemeral: true
+    });
 
-    // Optional: Status der Button-Nachricht aktualisieren (wer die Rolle gerade hat)
-    const channel = interaction.channel;
+    // Button-Nachricht aktualisieren
     if (client.claimMessageId) {
-        const botMessage = await channel.messages.fetch(client.claimMessageId).catch(() => null);
+        const channel = interaction.channel;
+        const botMessage = await channel.messages
+            .fetch(client.claimMessageId)
+            .catch(() => null);
+
         if (botMessage) {
             botMessage.edit({
                 content: `Die Rolle "klick" gehört gerade: <@${member.id}>`,
                 components: botMessage.components
-            }).catch(console.error);
+            });
         }
     }
 });
 
 // ===========================
-// Bot Login
+// 🔐 Login
 // ===========================
+
 client.login(TOKEN);
