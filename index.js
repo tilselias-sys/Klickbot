@@ -1,5 +1,5 @@
 // =======================================
-// 🔥 Klick-Bot – ULTRA STABLE FULL VERSION
+// 🔥 Klick-Bot – ULTRA STABLE & BUTTON READY
 // =======================================
 
 const express = require('express');
@@ -38,7 +38,7 @@ const client = new Client({
 });
 
 // =======================================
-// Datenspeicherung (Crash Safe)
+// Datenspeicherung
 // =======================================
 
 function loadData() {
@@ -50,7 +50,6 @@ function loadData() {
             claimMessageId: null
         };
     }
-
     try {
         return JSON.parse(fs.readFileSync(DATA_FILE));
     } catch {
@@ -68,7 +67,7 @@ function saveData(data) {
 }
 
 // =======================================
-// Ready Event
+// Bot Ready
 // =======================================
 
 client.once(Events.ClientReady, async () => {
@@ -101,7 +100,6 @@ client.once(Events.ClientReady, async () => {
 
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
-
     const content = message.content.toLowerCase();
 
     // Setup Button
@@ -129,8 +127,7 @@ client.on(Events.MessageCreate, async message => {
 
         if (data.currentHolderId && data.roleStartTime) {
             const duration = Date.now() - data.roleStartTime;
-            if (!data.leaderboard[data.currentHolderId])
-                data.leaderboard[data.currentHolderId] = 0;
+            if (!data.leaderboard[data.currentHolderId]) data.leaderboard[data.currentHolderId] = 0;
             data.leaderboard[data.currentHolderId] += duration;
             data.roleStartTime = Date.now();
             saveData(data);
@@ -143,7 +140,6 @@ client.on(Events.MessageCreate, async message => {
         if (sorted.length === 0) return message.channel.send("Noch keine Daten vorhanden.");
 
         let text = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
-
         for (let i = 0; i < sorted.length; i++) {
             const user = await client.users.fetch(sorted[i][0]);
             const totalSeconds = Math.floor(sorted[i][1] / 1000);
@@ -161,17 +157,17 @@ client.on(Events.MessageCreate, async message => {
 // Button Interaction
 // =======================================
 
-let interactionLock = false;
+let interactionLock = false; // Verhindert doppelte Klicks gleichzeitig
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId !== 'claim_role') return;
 
-    if (interactionLock) return; // Race-condition verhindern
+    if (interactionLock) return;
     interactionLock = true;
 
     try {
-        // Sofort ack, kein "Bot denkt..." Popup
+        // Sofort ack
         await interaction.deferUpdate().catch(() => {});
 
         const member = interaction.member;
@@ -182,25 +178,27 @@ client.on(Events.InteractionCreate, async interaction => {
         const data = loadData();
         const now = Date.now();
 
-        // Alte Zeit speichern
+        // Alte Zeit für Leaderboard speichern
         if (data.currentHolderId && data.roleStartTime) {
             const duration = now - data.roleStartTime;
-            if (!data.leaderboard[data.currentHolderId])
-                data.leaderboard[data.currentHolderId] = 0;
+            if (!data.leaderboard[data.currentHolderId]) data.leaderboard[data.currentHolderId] = 0;
             data.leaderboard[data.currentHolderId] += duration;
         }
 
         // Alte Rolle entfernen
-        for (const [, guildMember] of role.members) {
-            await guildMember.roles.remove(role).catch(() => {});
+        if (data.currentHolderId) {
+            const prevMember = guild.members.cache.get(data.currentHolderId);
+            if (prevMember && prevMember.roles.cache.has(role.id)) {
+                await prevMember.roles.remove(role).catch(() => {});
+            }
         }
 
-        // Neue Rolle vergeben
+        // Neue Rolle geben
         await member.roles.add(role);
 
+        // Daten aktualisieren
         data.currentHolderId = member.id;
         data.roleStartTime = now;
-
         saveData(data);
 
         // Button-Nachricht aktualisieren
@@ -227,7 +225,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // =======================================
-// Crash Schutz
+// Crash-Schutz
 // =======================================
 
 client.on('error', console.error);
@@ -235,7 +233,7 @@ process.on('unhandledRejection', console.error);
 process.on('uncaughtException', console.error);
 
 // =======================================
-// Login
+// Bot Login
 // =======================================
 
 client.login(TOKEN);
