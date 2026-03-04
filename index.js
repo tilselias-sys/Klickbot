@@ -54,7 +54,7 @@ client.once(Events.ClientReady, () => {
     console.log(`✅ Eingeloggt als ${client.user.tag}`);
 });
 
-// 6. BUTTON LOGIK (InteractionCreate)
+// 6. BUTTON LOGIK (InteractionCreate) - REPARIERTE VERSION
 let interactionLock = false;
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -76,9 +76,12 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const data = loadData();
+        
+        // SICHERHEITS-CHECK: Falls das Leaderboard-Objekt fehlt, erstelle es neu
+        if (!data.leaderboard) data.leaderboard = {};
+
         const now = Date.now();
 
-        // Falls User die Rolle schon hat
         if (data.currentHolderId === member.id) {
             interactionLock = false;
             return interaction.reply({ content: "Du hast die Rolle schon!", ephemeral: true });
@@ -88,8 +91,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Alten Besitzer entfernen & Zeit speichern
         if (data.currentHolderId) {
-            const duration = now - data.roleStartTime;
-            data.leaderboard[data.currentHolderId] = (data.leaderboard[data.currentHolderId] || 0) + duration;
+            const duration = now - (data.roleStartTime || now);
+            
+            // Sicherstellen, dass für die ID ein Eintrag existiert (verhindert den "undefined" Fehler)
+            if (!data.leaderboard[data.currentHolderId]) {
+                data.leaderboard[data.currentHolderId] = 0;
+            }
+            
+            data.leaderboard[data.currentHolderId] += duration;
             
             const prevMember = await guild.members.fetch(data.currentHolderId).catch(() => null);
             if (prevMember) {
@@ -99,11 +108,17 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Neuen Besitzer setzen
         await member.roles.add(role).catch(e => console.error("Konnte Rolle nicht geben:", e));
+        
         data.currentHolderId = member.id;
         data.roleStartTime = now;
+        
+        // Sicherstellen, dass der neue User im Board existiert
+        if (!data.leaderboard[member.id]) {
+            data.leaderboard[member.id] = 0;
+        }
+
         saveData(data);
 
-        // Nachricht aktualisieren
         await interaction.editReply({
             content: `Die Rolle **${ROLE_NAME}** gehört gerade: <@${member.id}>`,
             components: interaction.message.components
