@@ -1,5 +1,5 @@
 // =======================================
-// 🔥 Klick-Bot – FINAL STABLE VERSION
+// 🔥 Klick-Bot – ULTRA STABLE FULL VERSION
 // =======================================
 
 const express = require('express');
@@ -75,7 +75,6 @@ client.once(Events.ClientReady, async () => {
     console.log(`Bot ist online als ${client.user.tag}`);
 
     const data = loadData();
-
     const guilds = await client.guilds.fetch();
 
     for (const [guildId] of guilds) {
@@ -86,12 +85,10 @@ client.once(Events.ClientReady, async () => {
         if (!role) continue;
 
         const holder = role.members.first();
-
         if (holder) {
             data.currentHolderId = holder.id;
-            if (!data.roleStartTime) {
-                data.roleStartTime = Date.now();
-            }
+            if (!data.roleStartTime) data.roleStartTime = Date.now();
+            console.log(`Aktueller Besitzer erkannt: ${holder.user.tag}`);
         }
     }
 
@@ -109,7 +106,6 @@ client.on(Events.MessageCreate, async message => {
 
     // Setup Button
     if (content === '!setupclick') {
-
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('claim_role')
@@ -129,15 +125,12 @@ client.on(Events.MessageCreate, async message => {
 
     // Leaderboard
     if (content === '!leaderboard') {
-
         const data = loadData();
 
         if (data.currentHolderId && data.roleStartTime) {
             const duration = Date.now() - data.roleStartTime;
-
             if (!data.leaderboard[data.currentHolderId])
                 data.leaderboard[data.currentHolderId] = 0;
-
             data.leaderboard[data.currentHolderId] += duration;
             data.roleStartTime = Date.now();
             saveData(data);
@@ -147,8 +140,7 @@ client.on(Events.MessageCreate, async message => {
             .sort((a, b) => b[1] - a[1])
             .slice(0, 10);
 
-        if (sorted.length === 0)
-            return message.channel.send("Noch keine Daten vorhanden.");
+        if (sorted.length === 0) return message.channel.send("Noch keine Daten vorhanden.");
 
         let text = "🏆 **Leaderboard – Rolle 'klick'** 🏆\n\n";
 
@@ -166,7 +158,7 @@ client.on(Events.MessageCreate, async message => {
 });
 
 // =======================================
-// Button Interaction (NO THINKING BUG)
+// Button Interaction
 // =======================================
 
 let interactionLock = false;
@@ -175,34 +167,30 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId !== 'claim_role') return;
 
-    if (interactionLock) return;
+    if (interactionLock) return; // Race-condition verhindern
     interactionLock = true;
 
     try {
-
-        // 🔥 KEIN "Bot denkt..." mehr
-        await interaction.deferUpdate();
+        // Sofort ack, kein "Bot denkt..." Popup
+        await interaction.deferUpdate().catch(() => {});
 
         const member = interaction.member;
         const guild = interaction.guild;
         const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
-
         if (!role) return;
 
         const data = loadData();
         const now = Date.now();
 
-        // Zeit vom alten Besitzer speichern
+        // Alte Zeit speichern
         if (data.currentHolderId && data.roleStartTime) {
             const duration = now - data.roleStartTime;
-
             if (!data.leaderboard[data.currentHolderId])
                 data.leaderboard[data.currentHolderId] = 0;
-
             data.leaderboard[data.currentHolderId] += duration;
         }
 
-        // Rolle bei allen entfernen (100% exklusiv)
+        // Alte Rolle entfernen
         for (const [, guildMember] of role.members) {
             await guildMember.roles.remove(role).catch(() => {});
         }
@@ -215,23 +203,24 @@ client.on(Events.InteractionCreate, async interaction => {
 
         saveData(data);
 
-        // Nachricht updaten
+        // Button-Nachricht aktualisieren
         if (data.claimMessageId) {
             const channel = interaction.channel;
-            const botMessage = await channel.messages
-                .fetch(data.claimMessageId)
-                .catch(() => null);
-
+            const botMessage = await channel.messages.fetch(data.claimMessageId).catch(() => null);
             if (botMessage) {
                 await botMessage.edit({
                     content: `Die Rolle "klick" gehört gerade: <@${member.id}>`,
                     components: botMessage.components
-                });
+                }).catch(() => {});
             }
         }
 
     } catch (err) {
-        console.error(err);
+        if (err.code === 10062) {
+            console.warn("Interaction ist abgelaufen, kann nicht geantwortet werden.");
+        } else {
+            console.error(err);
+        }
     }
 
     interactionLock = false;
